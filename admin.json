@@ -1,0 +1,8 @@
+{
+  "email": "admin@example.com",
+  "password": "admin123",
+  "name": "System Admin",
+  "status": "active",
+  "organizationalUnit": "Administration",
+  "managerEmail": null
+}
