@@ -44,8 +44,8 @@ The application has an admin initialization feature that:
 1. Creates an admin.json file with default admin credentials
 2. Loads this admin account on server startup if it doesn't exist
 3. Uses the credentials:
-  Email: admin@example.com
-  Password: admin123
+      Email: admin@example.com
+      Password: admin123
 
 To use the system:
 
