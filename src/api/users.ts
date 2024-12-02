@@ -47,3 +47,8 @@ export const fetchAuditLogs = async () => {
   const { data } = await api.get('/audit-logs');
   return data;
 };
+
+export const deleteUser = async (id: string | number) => {
+  await api.post(`/users/${id}/delete`);
+  return { success: true };
+};

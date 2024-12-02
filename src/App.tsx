@@ -25,7 +25,29 @@ function App() {
           </Route>
         </Routes>
       </Router>
-      <Toaster position="top-right" />
+      <Toaster 
+        position="bottom-right"
+        toastOptions={{
+          className: '',
+          style: {
+            background: '#1A2426',
+            color: '#E2E8F0',
+            border: '1px solid rgba(28, 59, 59, 0.2)',
+          },
+          success: {
+            iconTheme: {
+              primary: '#7AB800',
+              secondary: '#1A2426',
+            },
+          },
+          error: {
+            iconTheme: {
+              primary: '#EF4444',
+              secondary: '#1A2426',
+            },
+          },
+        }}
+      />
     </QueryClientProvider>
   );
 }

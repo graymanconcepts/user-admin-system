@@ -27,7 +27,10 @@ async function initializeDb() {
     driver: sqlite3.Database
   });
 
+  // Drop and recreate audit_logs table to modify schema
   await db.exec(`
+    DROP TABLE IF EXISTS audit_logs;
+    
     CREATE TABLE IF NOT EXISTS users (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       email TEXT UNIQUE NOT NULL,
@@ -44,10 +47,10 @@ async function initializeDb() {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       action TEXT NOT NULL,
       userId INTEGER,
+      userName TEXT NOT NULL,
       details TEXT,
       performedBy INTEGER,
       timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (userId) REFERENCES users(id),
       FOREIGN KEY (performedBy) REFERENCES users(id)
     );
   `);
@@ -68,6 +71,14 @@ async function initializeDb() {
   } catch (error) {
     console.error('Error initializing admin account:', error);
   }
+}
+
+// Helper function for audit logging
+async function logAuditEvent(action, userId, userName, performedBy, details) {
+  await db.run(
+    'INSERT INTO audit_logs (action, userId, userName, details, performedBy) VALUES (?, ?, ?, ?, ?)',
+    [action, userId, userName, details, performedBy]
+  );
 }
 
 // Middleware to verify JWT
@@ -128,11 +139,7 @@ app.post('/api/users', authenticateToken, async (req, res) => {
       [email, hashedPassword, name, organizationalUnit, managerEmail]
     );
 
-    await db.run(
-      'INSERT INTO audit_logs (action, userId, performedBy, details) VALUES (?, ?, ?, ?)',
-      ['create_user', result.lastID, req.user.id, `Created user: ${email}`]
-    );
-
+    await logAuditEvent('create_user', result.lastID, name, req.user.id, `Created user: ${email}`);
     res.status(201).json({ id: result.lastID });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -149,11 +156,7 @@ app.put('/api/users/:id', authenticateToken, async (req, res) => {
       [name, status, organizationalUnit, managerEmail, req.params.id]
     );
 
-    await db.run(
-      'INSERT INTO audit_logs (action, userId, performedBy, details) VALUES (?, ?, ?, ?)',
-      ['update_user', req.params.id, req.user.id, 'Updated user details']
-    );
-
+    await logAuditEvent('update_user', req.params.id, name, req.user.id, 'Updated user details');
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -171,10 +174,27 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req, res) =>
       [hashedPassword, req.params.id]
     );
     
-    await db.run(
-      'INSERT INTO audit_logs (action, userId, performedBy, details) VALUES (?, ?, ?, ?)',
-      ['reset_password', req.params.id, req.user.id, 'Password reset']
-    );
+    await logAuditEvent('reset_password', req.params.id, (await db.get('SELECT name FROM users WHERE id = ?', req.params.id)).name, req.user.id, 'Password reset');
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Delete user
+app.post('/api/users/:id/delete', authenticateToken, async (req, res) => {
+  try {
+    // Check if user exists
+    const user = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Log the deletion before deleting the user
+    await logAuditEvent('delete_user', req.params.id, user.name, req.user.id, `Deleted user: ${user.email}`);
+
+    // Delete the user
+    await db.run('DELETE FROM users WHERE id = ?', req.params.id);
 
     res.json({ success: true });
   } catch (error) {
@@ -187,10 +207,8 @@ app.get('/api/audit-logs', authenticateToken, async (req, res) => {
   const logs = await db.all(`
     SELECT 
       audit_logs.*,
-      users.email as userEmail,
       performers.email as performerEmail
     FROM audit_logs
-    LEFT JOIN users ON users.id = audit_logs.userId
     LEFT JOIN users performers ON performers.id = audit_logs.performedBy
     ORDER BY timestamp DESC
   `);

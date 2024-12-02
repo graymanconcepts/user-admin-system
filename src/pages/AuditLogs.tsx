@@ -1,65 +1,80 @@
 import { useQuery } from '@tanstack/react-query';
 import { format } from 'date-fns';
-import { fetchAuditLogs } from '../api/users';
+import { fetchAuditLogs, fetchUsers } from '../api/users';
 
 export default function AuditLogs() {
-  const { data: logs = [], isLoading } = useQuery({
+  const { data: logs = [], isLoading: isLoadingLogs } = useQuery({
     queryKey: ['audit-logs'],
     queryFn: fetchAuditLogs
   });
 
+  const { data: users = [], isLoading: isLoadingUsers } = useQuery({
+    queryKey: ['users'],
+    queryFn: fetchUsers
+  });
+
+  // Create a mapping of user IDs to names
+  const userMap = users.reduce((acc: { [key: string]: string }, user: any) => {
+    acc[user.id] = user.name;
+    return acc;
+  }, {});
+
+  // Debug logs
+  console.log('Users:', users);
+  console.log('User Map:', userMap);
+  console.log('Audit Logs:', logs);
+
+  const isLoading = isLoadingLogs || isLoadingUsers;
+
   return (
     <div>
-      <h1 className="text-2xl font-bold text-gray-900 mb-6">Audit Logs</h1>
+      <h1 className="text-2xl font-bold text-text-primary mb-6">Audit Logs</h1>
 
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="card overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full">
-            <thead className="bg-gray-50">
+            <thead>
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Timestamp
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Action
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  User
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Performed By
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Details
-                </th>
+                <th className="table-header">Timestamp</th>
+                <th className="table-header">Action</th>
+                <th className="table-header">User</th>
+                <th className="table-header">Performed By</th>
+                <th className="table-header">Details</th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center">Loading...</td>
+                  <td colSpan={5} className="px-6 py-4 text-center text-text-disabled">Loading...</td>
                 </tr>
               ) : logs.map((log: any) => (
-                <tr key={log.id}>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {format(new Date(log.timestamp), 'PPp')}
+                <tr key={log.id} className="border-t border-primary-300/20">
+                  <td className="table-cell text-text-secondary">
+                    {format(new Date(log.timestamp), 'MMM d, yyyy HH:mm')}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <span className="px-2 inline-flex text-xs leading-5 font-semibold rounded-full bg-blue-100 text-blue-800">
+                  <td className="table-cell">
+                    <span className="badge badge-info">
                       {log.action}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {log.userEmail}
+                  <td className="table-cell text-text-primary">
+                    {log.userName || 'Unknown User'}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {log.performerEmail}
+                  <td className="table-cell text-text-primary">
+                    {userMap[log.performedBy] || log.performerEmail || 'Unknown User'}
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
+                  <td className="table-cell text-text-secondary">
                     {log.details}
                   </td>
                 </tr>
               ))}
+              {!isLoading && logs.length === 0 && (
+                <tr>
+                  <td colSpan={5} className="px-6 py-4 text-center text-text-disabled">
+                    No audit logs found
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
