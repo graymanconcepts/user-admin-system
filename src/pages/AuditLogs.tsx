@@ -1,4 +1,5 @@
 import { useQuery } from '@tanstack/react-query';
+import { useMemo } from 'react';
 import { format } from 'date-fns';
 import { fetchAuditLogs, fetchUsers } from '../api/users';
 
@@ -14,15 +15,12 @@ export default function AuditLogs() {
   });
 
   // Create a mapping of user IDs to names
-  const userMap = users.reduce((acc: { [key: string]: string }, user: any) => {
-    acc[user.id] = user.name;
-    return acc;
-  }, {});
-
-  // Debug logs
-  console.log('Users:', users);
-  console.log('User Map:', userMap);
-  console.log('Audit Logs:', logs);
+  const userMap = useMemo(() => {
+    return users.reduce((acc: Record<number, string>, user: { id: number; name: string }) => {
+      acc[user.id] = user.name;
+      return acc;
+    }, {});
+  }, [users]);
 
   const isLoading = isLoadingLogs || isLoadingUsers;
 

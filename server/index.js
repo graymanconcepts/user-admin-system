@@ -111,7 +111,11 @@ async function initializeDb() {
         'INSERT INTO users (email, password, name, roleId, departmentId, status) VALUES (?, ?, ?, ?, ?, ?)',
         [adminData.email, hashedPassword, adminData.name, adminRole.id, adminDept.id, 'active']
       );
-      console.log('Admin account initialized with status: active');
+    } else {
+      await db.run(
+        'UPDATE users SET status = ? WHERE email = ?',
+        ['active', 'admin@example.com']
+      );
     }
   } catch (error) {
     console.error('Error initializing admin account:', error);
@@ -173,7 +177,6 @@ app.get('/api/users', authenticateToken, async (req, res) => {
       LEFT JOIN roles r ON u.roleId = r.id
       LEFT JOIN departments d ON u.departmentId = d.id
     `);
-    console.log('Users query result:', users); // Debug log
     res.json(users);
   } catch (error) {
     console.error('Error fetching users:', error);
@@ -470,23 +473,12 @@ app.delete('/api/roles/:id', authenticateToken, async (req, res) => {
 app.get('/api/organization-tree', authenticateToken, async (req, res) => {
   try {
     const departmentId = req.query.departmentId;
-    console.log('Fetching org tree. Department ID:', departmentId);
     
-    // If departmentId is provided, ensure it's a valid number
-    let parsedDepartmentId = null;
-    if (departmentId && departmentId !== 'all') {
-      parsedDepartmentId = parseInt(departmentId, 10);
-      if (isNaN(parsedDepartmentId)) {
-        return res.status(400).json({ error: 'Invalid department ID' });
-      }
-    }
-
-    // Get all non-admin users, optionally filtered by department
-    const users = await db.all(`
+    let query = `
       SELECT 
         u.id, 
         u.name, 
-        u.email,
+        u.email, 
         u.managerId,
         u.departmentId,
         r.name as role,
@@ -494,48 +486,35 @@ app.get('/api/organization-tree', authenticateToken, async (req, res) => {
       FROM users u
       LEFT JOIN roles r ON u.roleId = r.id
       LEFT JOIN departments d ON u.departmentId = d.id
-      WHERE r.name != 'admin'
-      ${parsedDepartmentId ? 'AND u.departmentId = ?' : ''}
-      ORDER BY u.id
-    `, parsedDepartmentId ? [parsedDepartmentId] : []);
-
-    console.log('Found users:', users);
-
-    if (!users || users.length === 0) {
-      return res.json([]);
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    if (departmentId && departmentId !== 'all') {
+      query += ' AND u.departmentId = ?';
+      params.push(departmentId);
     }
 
-    // Build the tree structure
-    const buildTree = (users, managerId = null) => {
-      const roots = users.filter(user => {
-        if (managerId === null) {
-          return !user.managerId;
-        }
-        return user.managerId === managerId;
-      });
+    const users = await db.all(query, params);
+    
+    if (users.length === 0) {
+      return res.json({ id: 0, name: 'No Users', subordinates: [] });
+    }
 
+    const buildTree = (users, managerId = null) => {
+      // Consider both null and empty string as root nodes
+      const roots = users.filter(user => !user.managerId || user.managerId === '' || user.managerId === managerId);
       return roots.map(user => ({
-        id: user.id,
-        name: user.name,
-        email: user.email,
-        role: user.role,
-        department: user.department,
+        ...user,
         subordinates: buildTree(users, user.id)
       }));
     };
 
-    // Always return an array of root nodes
     const orgTree = buildTree(users);
-    console.log('Final org tree:', JSON.stringify(orgTree, null, 2));
     res.json(orgTree);
-
   } catch (error) {
     console.error('Error in organization-tree:', error);
-    res.status(500).json({ 
-      error: 'Internal server error', 
-      details: error.message,
-      stack: error.stack 
-    });
+    res.status(500).json({ error: 'Failed to fetch organization tree' });
   }
 });
 
@@ -606,7 +585,7 @@ app.get('/api/organization', authenticateToken, async (req, res) => {
     res.json(orgTree);
   } catch (error) {
     console.error('Error fetching organization:', error);
-    res.status(500).json({ error: 'Failed to fetch organization structure' });
+    res.status(500).json({ error: 'Failed to fetch organization' });
   }
 });
 
@@ -620,7 +599,9 @@ const PORT = process.env.PORT || 3000;
 // Initialize database and start server
 initializeDb().then(() => {
   app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+    // Server is running
+  }).on('error', err => {
+    console.error('Failed to initialize database:', err);
   });
 }).catch(err => {
   console.error('Failed to initialize database:', err);

@@ -22,8 +22,6 @@ export default function UserList() {
     queryKey: ['users'],
     queryFn: async () => {
       const response = await fetchUsers();
-      console.log('Successful API endpoint:', '/users');
-      console.log('Response:', response);
       return response;
     },
     staleTime: 0, // Consider data stale immediately
@@ -38,13 +36,10 @@ export default function UserList() {
 
   const deleteMutation = useMutation({
     mutationFn: async (id: number | string) => {
-      console.log('Attempting to delete user with ID:', id);
       try {
         const result = await deleteUser(id);
-        console.log('Delete result:', result);
         return result;
       } catch (error: any) {
-        console.error('Delete error:', error.response?.data || error.message);
         throw error;
       }
     },
@@ -90,7 +85,6 @@ export default function UserList() {
   };
 
   const getStatusBadgeClass = (status?: string) => {
-    console.log('Status value:', status); // Debug log
     if (!status) return 'badge-warning';
     
     switch (status.toLowerCase()) {
@@ -103,7 +97,6 @@ export default function UserList() {
       case 'suspended':
         return 'badge-error';
       default:
-        console.log('Unknown status:', status); // Debug log
         return 'badge-warning';
     }
   };

@@ -39,10 +39,8 @@ export default function EditUserModal({ isOpen, onClose, user }: EditUserModalPr
     queryFn: async () => {
       try {
         const response = await api.get('/roles');
-        console.log('Roles response:', response.data);
         return response.data || [];
       } catch (error) {
-        console.error('Error fetching roles:', error);
         throw error;
       }
     }
@@ -79,10 +77,6 @@ export default function EditUserModal({ isOpen, onClose, user }: EditUserModalPr
       departmentId: data.departmentId ? parseInt(data.departmentId) : null,
       managerId: data.managerId ? parseInt(data.managerId) : null
     };
-
-    console.log('Submitting user update with data:', formattedData);
-    console.log('Original form data:', data);
-    console.log('User prop:', user);
 
     updateUserMutation.mutate({
       id: user.id,
@@ -141,7 +135,6 @@ export default function EditUserModal({ isOpen, onClose, user }: EditUserModalPr
                   <option 
                     key={role.id} 
                     value={role.id}
-                    selected={role.id === user.roleId}
                   >
                     {role.name.charAt(0).toUpperCase() + role.name.slice(1)}
                   </option>

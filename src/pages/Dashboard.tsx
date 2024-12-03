@@ -3,6 +3,7 @@ import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { fetchUsers } from '../api/users';
 import { User } from '../types/User';
+import DashboardMessage from '../components/DashboardMessage';
 
 interface DonutChartProps {
   value: number;
@@ -119,6 +120,7 @@ export default function Dashboard() {
           </div>
         ))}
       </div>
+      <DashboardMessage />
     </div>
   );
 }
