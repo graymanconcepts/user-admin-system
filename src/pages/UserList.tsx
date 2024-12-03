@@ -65,7 +65,7 @@ export default function UserList() {
 
   const filteredUsers = selectedDepartment === 'all'
     ? users
-    : users.filter((user: User) => user.departmentName.toLowerCase() === String(selectedDepartment).toLowerCase());
+    : users.filter((user: User) => user.departmentId === selectedDepartment);
 
   const getRoleColor = (role?: string) => {
     if (!role) return 'gray'; // Default color for undefined roles
@@ -135,7 +135,7 @@ export default function UserList() {
               >
                 <option value="all">All Departments</option>
                 {departments.map((dept: { id: number; name: string }) => (
-                  <option key={dept.id} value={dept.name}>{dept.name}</option>
+                  <option key={dept.id} value={dept.id}>{dept.name}</option>
                 ))}
               </select>
             </div>
