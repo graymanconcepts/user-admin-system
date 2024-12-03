@@ -27,81 +27,76 @@ async function initializeDb() {
     driver: sqlite3.Database
   });
 
-  await db.exec(`
-    -- Drop existing tables to rebuild schema
-    DROP TABLE IF EXISTS audit_logs;
-    DROP TABLE IF EXISTS users;
-    DROP TABLE IF EXISTS departments;
-    DROP TABLE IF EXISTS roles;
-    
-    -- Create departments table
-    CREATE TABLE IF NOT EXISTS departments (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
-    );
+  // Check if tables exist
+  const tablesExist = await db.get("SELECT name FROM sqlite_master WHERE type='table' AND name='users'");
+  
+  if (!tablesExist) {
+    await db.exec(`
+      -- Create departments table
+      CREATE TABLE IF NOT EXISTS departments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+      );
 
-    -- Create roles table
-    CREATE TABLE IF NOT EXISTS roles (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL UNIQUE,
-      description TEXT,
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-      CHECK (name IN ('admin', 'manager', 'employee', 'contractor'))
-    );
+      -- Create roles table
+      CREATE TABLE IF NOT EXISTS roles (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT NOT NULL UNIQUE,
+        description TEXT,
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        CHECK (name IN ('admin', 'manager', 'employee', 'contractor'))
+      );
 
-    -- Create users table with department reference
-    CREATE TABLE IF NOT EXISTS users (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE,
-      name TEXT,
-      password TEXT,
-      roleId INTEGER,
-      departmentId INTEGER,
-      managerId INTEGER,
-      lastLogin TEXT,
-      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'pending', 'suspended')),
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (roleId) REFERENCES roles(id),
-      FOREIGN KEY (departmentId) REFERENCES departments(id),
-      FOREIGN KEY (managerId) REFERENCES users(id)
-    );
+      -- Create users table with department reference
+      CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        email TEXT UNIQUE,
+        name TEXT,
+        password TEXT,
+        roleId INTEGER,
+        departmentId INTEGER,
+        managerId INTEGER,
+        lastLogin TEXT,
+        status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'pending', 'suspended')),
+        createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (roleId) REFERENCES roles(id),
+        FOREIGN KEY (departmentId) REFERENCES departments(id),
+        FOREIGN KEY (managerId) REFERENCES users(id)
+      );
 
-    -- Create audit_logs table
-    CREATE TABLE IF NOT EXISTS audit_logs (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      action TEXT NOT NULL,
-      userId INTEGER,
-      userName TEXT,
-      performedBy INTEGER,
-      details TEXT,
-      timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY (userId) REFERENCES users(id),
-      FOREIGN KEY (performedBy) REFERENCES users(id)
-    );
+      -- Create audit_logs table
+      CREATE TABLE IF NOT EXISTS audit_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        action TEXT NOT NULL,
+        userId INTEGER,
+        userName TEXT,
+        performedBy INTEGER,
+        details TEXT,
+        timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (userId) REFERENCES users(id),
+        FOREIGN KEY (performedBy) REFERENCES users(id)
+      );
 
-    -- Insert initial roles
-    INSERT OR IGNORE INTO roles (name, description) VALUES
-      ('admin', 'Administrator with full access'),
-      ('manager', 'Department manager'),
-      ('employee', 'Regular employee'),
-      ('contractor', 'External contractor');
+      -- Insert initial roles
+      INSERT INTO roles (name, description) VALUES
+        ('admin', 'Administrator with full access'),
+        ('manager', 'Department manager'),
+        ('employee', 'Regular employee'),
+        ('contractor', 'External contractor');
 
-    -- Insert initial departments
-    INSERT OR IGNORE INTO departments (name, description) VALUES
-      ('Engineering', 'Software development and engineering teams'),
-      ('HR', 'Human Resources department'),
-      ('Sales', 'Sales and business development'),
-      ('Operations', 'Business operations and support');
-  `);
+      -- Insert initial departments
+      INSERT INTO departments (name, description) VALUES
+        ('Engineering', 'Software development and engineering teams'),
+        ('HR', 'Human Resources department'),
+        ('Sales', 'Sales and business development'),
+        ('Operations', 'Business operations and support');
+    `);
 
-  // Initialize admin account
-  try {
-    const adminData = JSON.parse(await readFile('admin.json', 'utf8'));
-    const existingAdmin = await db.get('SELECT id FROM users WHERE email = ?', adminData.email);
-    
-    if (!existingAdmin) {
+    // Initialize admin account
+    try {
+      const adminData = JSON.parse(await readFile('admin.json', 'utf8'));
       const hashedPassword = bcrypt.hashSync(adminData.password, 10);
       // Get the admin role ID and default department ID
       const adminRole = await db.get('SELECT id FROM roles WHERE name = ?', 'admin');
@@ -111,14 +106,9 @@ async function initializeDb() {
         'INSERT INTO users (email, password, name, roleId, departmentId, status) VALUES (?, ?, ?, ?, ?, ?)',
         [adminData.email, hashedPassword, adminData.name, adminRole.id, adminDept.id, 'active']
       );
-    } else {
-      await db.run(
-        'UPDATE users SET status = ? WHERE email = ?',
-        ['active', 'admin@example.com']
-      );
+    } catch (error) {
+      console.error('Error initializing admin account:', error);
     }
-  } catch (error) {
-    console.error('Error initializing admin account:', error);
   }
 }
 
@@ -498,20 +488,62 @@ app.get('/api/organization-tree', authenticateToken, async (req, res) => {
     const users = await db.all(query, params);
     
     if (users.length === 0) {
-      return res.json({ id: 0, name: 'No Users', subordinates: [] });
+      return res.json([]);
     }
 
-    const buildTree = (users, managerId = null) => {
-      // Consider both null and empty string as root nodes
-      const roots = users.filter(user => !user.managerId || user.managerId === '' || user.managerId === managerId);
-      return roots.map(user => ({
+    // Convert manager IDs to numbers for consistent comparison
+    users.forEach(user => {
+      user.managerId = user.managerId ? Number(user.managerId) : null;
+      user.id = Number(user.id);
+    });
+
+    // Create a map for O(1) lookup and initialize subordinates arrays
+    const userMap = {};
+    users.forEach(user => {
+      userMap[user.id] = {
         ...user,
-        subordinates: buildTree(users, user.id)
-      }));
+        subordinates: []
+      };
+    });
+
+    // Separate root nodes and child nodes
+    const roots = [];
+    const children = [];
+
+    // First pass: identify roots and children
+    users.forEach(user => {
+      const processedUser = userMap[user.id];
+      if (!user.managerId) {
+        roots.push(processedUser);
+      } else if (userMap[user.managerId]) {
+        children.push(processedUser);
+      } else {
+        // If manager doesn't exist, treat as root
+        roots.push(processedUser);
+      }
+    });
+
+    // Second pass: build hierarchy
+    children.forEach(user => {
+      const manager = userMap[user.managerId];
+      if (manager) {
+        manager.subordinates.push(user);
+      }
+    });
+
+    // Sort subordinates by name
+    const sortSubordinates = (node) => {
+      if (node.subordinates && node.subordinates.length > 0) {
+        node.subordinates.sort((a, b) => a.name.localeCompare(b.name));
+        node.subordinates.forEach(sortSubordinates);
+      }
     };
 
-    const orgTree = buildTree(users);
-    res.json(orgTree);
+    // Sort roots by name and sort their subordinates
+    roots.sort((a, b) => a.name.localeCompare(b.name));
+    roots.forEach(sortSubordinates);
+
+    res.json(roots);
   } catch (error) {
     console.error('Error in organization-tree:', error);
     res.status(500).json({ error: 'Failed to fetch organization tree' });
@@ -541,53 +573,23 @@ app.get('/api/departments/:id/users', authenticateToken, async (req, res) => {
   }
 });
 
-// Get organization hierarchy with department filtering
-app.get('/api/organization', authenticateToken, async (req, res) => {
+// Load test data function
+async function loadTestData() {
   try {
-    const { departmentId } = req.query;
+    // Check if we already have users other than admin
+    const userCount = await db.get('SELECT COUNT(*) as count FROM users WHERE email != ?', ['admin@example.com']);
     
-    let query = `
-      SELECT 
-        u.id, 
-        u.name, 
-        u.email, 
-        u.managerId,
-        r.name as role,
-        d.name as department
-      FROM users u
-      LEFT JOIN roles r ON u.roleId = r.id
-      LEFT JOIN departments d ON u.departmentId = d.id
-      WHERE 1=1
-    `;
-    
-    const params = [];
-    if (departmentId && departmentId !== 'all') {
-      query += ' AND u.departmentId = ?';
-      params.push(departmentId);
+    if (userCount.count === 0) {
+      const testData = await readFile('test-users.sql', 'utf8');
+      await db.exec(testData);
+      console.log('Test data loaded successfully');
+    } else {
+      console.log('Test data already exists, skipping import');
     }
-
-    const users = await db.all(query, params);
-    
-    if (users.length === 0) {
-      return res.json({ id: 0, name: 'No Users', subordinates: [] });
-    }
-
-    const buildTree = (users, managerId = null) => {
-      // Consider both null and empty string as root nodes
-      const roots = users.filter(user => !user.managerId || user.managerId === '' || user.managerId === managerId);
-      return roots.map(user => ({
-        ...user,
-        subordinates: buildTree(users, user.id)
-      }));
-    };
-
-    const orgTree = buildTree(users);
-    res.json(orgTree);
   } catch (error) {
-    console.error('Error fetching organization:', error);
-    res.status(500).json({ error: 'Failed to fetch organization' });
+    console.error('Error loading test data:', error);
   }
-});
+}
 
 // Handle React routing, return all requests to React app
 app.get('*', (req, res) => {
@@ -597,11 +599,12 @@ app.get('*', (req, res) => {
 const PORT = process.env.PORT || 3000;
 
 // Initialize database and start server
-initializeDb().then(() => {
+initializeDb().then(async () => {
+  // Load test data after database initialization
+  await loadTestData();
+  
   app.listen(PORT, () => {
-    // Server is running
-  }).on('error', err => {
-    console.error('Failed to initialize database:', err);
+    console.log(`Server is running on port ${PORT}`);
   });
 }).catch(err => {
   console.error('Failed to initialize database:', err);
