@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import axios from 'axios';
 import OrganizationChart from '../components/OrganizationChart';
@@ -9,7 +9,7 @@ interface Department {
 }
 
 const OrganizationPage: React.FC = () => {
-  const [selectedDepartment, setSelectedDepartment] = useState<number | 'all'>('all');
+  const [selectedDepartment, setSelectedDepartment] = useState<number>(0);
 
   const { data: departments = [] } = useQuery<Department[]>({
     queryKey: ['departments'],
@@ -24,23 +24,42 @@ const OrganizationPage: React.FC = () => {
     }
   });
 
+  // Set the first department as default when departments are loaded
+  useEffect(() => {
+    if (departments.length > 0 && selectedDepartment === 0) {
+      setSelectedDepartment(departments[0].id);
+    }
+  }, [departments]);
+
+  if (departments.length === 0) {
+    return (
+      <div className="p-6">
+        <div className="flex items-center justify-center min-h-[400px] text-text-secondary">
+          <p>No departments available</p>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="p-6">
       <div className="bg-primary rounded-lg shadow-sm mb-6 p-4">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-semibold text-text-primary">Organization Chart</h1>
-          <select
-            className="input-field py-2"
-            value={selectedDepartment}
-            onChange={(e) => setSelectedDepartment(e.target.value === 'all' ? 'all' : Number(e.target.value))}
-          >
-            <option value="all">All Departments</option>
-            {departments.map(dept => (
-              <option key={dept.id} value={dept.id}>
-                {dept.name}
-              </option>
-            ))}
-          </select>
+          <div className="flex items-center gap-2">
+            <span className="text-text-secondary font-medium">Showing:</span>
+            <select
+              className="input-field py-2"
+              value={selectedDepartment}
+              onChange={(e) => setSelectedDepartment(Number(e.target.value))}
+            >
+              {departments.map(dept => (
+                <option key={dept.id} value={dept.id}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       </div>
       
