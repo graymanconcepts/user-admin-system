@@ -2,6 +2,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Users, UserCheck, UserX, Clock } from 'lucide-react';
 import { PieChart, Pie, Cell, ResponsiveContainer } from 'recharts';
 import { fetchUsers } from '../api/users';
+import { User } from '../types/User';
 
 interface DonutChartProps {
   value: number;
@@ -38,16 +39,17 @@ const DonutChart: React.FC<DonutChartProps> = ({ value, total, color }) => {
 };
 
 export default function Dashboard() {
-  const { data: users = [] } = useQuery({
+  const { data: users = [] } = useQuery<User[]>({
     queryKey: ['users'],
     queryFn: fetchUsers
   });
 
   const stats = {
     total: users.length,
-    active: users.filter(user => user.status === 'active').length,
-    inactive: users.filter(user => user.status !== 'active').length,
-    recentLogins: users.filter(user => {
+    active: users.filter((user: User) => user.status === 'active').length,
+    inactive: users.filter((user: User) => user.status !== 'active').length,
+    recentLogins: users.filter((user: User) => {
+      if (!user.lastLogin) return false;
       const lastLogin = new Date(user.lastLogin);
       const weekAgo = new Date();
       weekAgo.setDate(weekAgo.getDate() - 7);
