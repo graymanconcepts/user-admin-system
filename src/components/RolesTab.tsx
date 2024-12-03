@@ -94,42 +94,45 @@ export default function RolesTab() {
         </button>
       </div>
 
-      <div className="bg-background-secondary rounded-lg overflow-hidden">
-        <table className="w-full">
-          <thead className="border-b border-border">
-            <tr>
-              <th className="text-left p-4 font-medium text-text-secondary">Name</th>
-              <th className="text-left p-4 font-medium text-text-secondary">Description</th>
-              <th className="text-right p-4 font-medium text-text-secondary" style={{ width: '200px' }}>Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-border">
-            {roles.map((role) => (
-              <tr key={role.id} className="hover:bg-background-secondary/50">
-                <td className="p-4">{role.name}</td>
-                <td className="p-4">{role.description}</td>
-                <td className="p-4">
-                  <div className="flex space-x-2">
-                    <button
-                      onClick={() => setEditingRole(role)}
-                      className="btn-secondary flex items-center text-sm"
-                    >
-                      <Edit2 className="w-4 h-4 mr-1" />
-                      Edit
-                    </button>
-                    <button
-                      onClick={() => handleDeleteClick(role)}
-                      className="flex items-center text-sm px-4 py-2 rounded-md bg-status-error hover:bg-status-error/80 text-white transition-colors duration-200"
-                    >
-                      <Trash2 className="w-4 h-4 mr-1" />
-                      Delete
-                    </button>
-                  </div>
-                </td>
+      <div className="card">
+        <div className="overflow-x-auto">
+          <table className="w-full">
+            <thead>
+              <tr>
+                <th className="table-header">Name</th>
+                <th className="table-header">Description</th>
+                <th className="table-header text-center" style={{ width: '200px' }}>Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {roles.map((role) => (
+                <tr key={role.id} className="border-t border-border">
+                  <td className="table-cell">{role.name}</td>
+                  <td className="table-cell">{role.description}</td>
+                  <td className="table-cell">
+                    <div className="flex justify-center space-x-2">
+                      <button
+                        onClick={() => setEditingRole(role)}
+                        className="btn-secondary flex items-center text-sm"
+                      >
+                        <Edit2 className="w-4 h-4 mr-1" />
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDeleteClick(role)}
+                        className="flex items-center text-sm px-4 py-2 rounded-md bg-status-error hover:bg-status-error/80 text-white transition-colors duration-200"
+                        disabled={role.name === 'admin'}
+                      >
+                        <Trash2 className="w-4 h-4 mr-1" />
+                        Delete
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {(isAddingRole || editingRole) && (
