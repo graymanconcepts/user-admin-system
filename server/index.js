@@ -27,32 +27,73 @@ async function initializeDb() {
     driver: sqlite3.Database
   });
 
-  // Drop and recreate audit_logs table to modify schema
   await db.exec(`
+    -- Drop existing tables to rebuild schema
     DROP TABLE IF EXISTS audit_logs;
+    DROP TABLE IF EXISTS users;
+    DROP TABLE IF EXISTS departments;
+    DROP TABLE IF EXISTS roles;
     
-    CREATE TABLE IF NOT EXISTS users (
+    -- Create departments table
+    CREATE TABLE IF NOT EXISTS departments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
-      email TEXT UNIQUE NOT NULL,
-      password TEXT NOT NULL,
-      name TEXT NOT NULL,
-      status TEXT DEFAULT 'active',
-      organizationalUnit TEXT,
-      managerEmail TEXT,
-      lastLogin TEXT,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
       createdAt TEXT DEFAULT CURRENT_TIMESTAMP
     );
 
+    -- Create roles table
+    CREATE TABLE IF NOT EXISTS roles (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL UNIQUE,
+      description TEXT,
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+      CHECK (name IN ('admin', 'manager', 'employee', 'contractor'))
+    );
+
+    -- Create users table with department reference
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      email TEXT UNIQUE,
+      name TEXT,
+      password TEXT,
+      roleId INTEGER,
+      departmentId INTEGER,
+      managerId INTEGER,
+      lastLogin TEXT,
+      status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive', 'pending', 'suspended')),
+      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (roleId) REFERENCES roles(id),
+      FOREIGN KEY (departmentId) REFERENCES departments(id),
+      FOREIGN KEY (managerId) REFERENCES users(id)
+    );
+
+    -- Create audit_logs table
     CREATE TABLE IF NOT EXISTS audit_logs (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       action TEXT NOT NULL,
       userId INTEGER,
-      userName TEXT NOT NULL,
-      details TEXT,
+      userName TEXT,
       performedBy INTEGER,
+      details TEXT,
       timestamp TEXT DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (userId) REFERENCES users(id),
       FOREIGN KEY (performedBy) REFERENCES users(id)
     );
+
+    -- Insert initial roles
+    INSERT OR IGNORE INTO roles (name, description) VALUES
+      ('admin', 'Administrator with full access'),
+      ('manager', 'Department manager'),
+      ('employee', 'Regular employee'),
+      ('contractor', 'External contractor');
+
+    -- Insert initial departments
+    INSERT OR IGNORE INTO departments (name, description) VALUES
+      ('Engineering', 'Software development and engineering teams'),
+      ('HR', 'Human Resources department'),
+      ('Sales', 'Sales and business development'),
+      ('Operations', 'Business operations and support');
   `);
 
   // Initialize admin account
@@ -62,11 +103,15 @@ async function initializeDb() {
     
     if (!existingAdmin) {
       const hashedPassword = bcrypt.hashSync(adminData.password, 10);
+      // Get the admin role ID and default department ID
+      const adminRole = await db.get('SELECT id FROM roles WHERE name = ?', 'admin');
+      const adminDept = await db.get('SELECT id FROM departments WHERE name = ?', 'Engineering');
+      
       await db.run(
-        'INSERT INTO users (email, password, name, status, organizationalUnit, managerEmail) VALUES (?, ?, ?, ?, ?, ?)',
-        [adminData.email, hashedPassword, adminData.name, adminData.status, adminData.organizationalUnit, adminData.managerEmail]
+        'INSERT INTO users (email, password, name, roleId, departmentId, status) VALUES (?, ?, ?, ?, ?, ?)',
+        [adminData.email, hashedPassword, adminData.name, adminRole.id, adminDept.id, 'active']
       );
-      console.log('Admin account initialized');
+      console.log('Admin account initialized with status: active');
     }
   } catch (error) {
     console.error('Error initializing admin account:', error);
@@ -111,14 +156,35 @@ app.post('/api/login', async (req, res) => {
 
 // Get users
 app.get('/api/users', authenticateToken, async (req, res) => {
-  const users = await db.all('SELECT id, email, name, status, lastLogin, organizationalUnit FROM users');
-  res.json(users);
+  try {
+    const users = await db.all(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.name, 
+        u.roleId,
+        u.departmentId,
+        u.managerId,
+        COALESCE(u.status, 'active') as status,
+        r.name as roleName,
+        d.name as departmentName,
+        u.lastLogin
+      FROM users u
+      LEFT JOIN roles r ON u.roleId = r.id
+      LEFT JOIN departments d ON u.departmentId = d.id
+    `);
+    console.log('Users query result:', users); // Debug log
+    res.json(users);
+  } catch (error) {
+    console.error('Error fetching users:', error);
+    res.status(500).json({ error: 'Failed to fetch users' });
+  }
 });
 
 // Get user details
 app.get('/api/users/:id', authenticateToken, async (req, res) => {
   const user = await db.get(
-    'SELECT id, email, name, status, lastLogin, organizationalUnit, managerEmail FROM users WHERE id = ?',
+    'SELECT id, email, name, roleId, departmentId, managerId FROM users WHERE id = ?',
     req.params.id
   );
   if (user) {
@@ -130,13 +196,13 @@ app.get('/api/users/:id', authenticateToken, async (req, res) => {
 
 // Create user
 app.post('/api/users', authenticateToken, async (req, res) => {
-  const { email, password, name, organizationalUnit, managerEmail } = req.body;
+  const { email, password, name, roleId, departmentId, managerId } = req.body;
   const hashedPassword = bcrypt.hashSync(password, 10);
 
   try {
     const result = await db.run(
-      'INSERT INTO users (email, password, name, organizationalUnit, managerEmail) VALUES (?, ?, ?, ?, ?)',
-      [email, hashedPassword, name, organizationalUnit, managerEmail]
+      'INSERT INTO users (email, password, name, roleId, departmentId, managerId) VALUES (?, ?, ?, ?, ?, ?)',
+      [email, hashedPassword, name, roleId, departmentId, managerId]
     );
 
     await logAuditEvent('create_user', result.lastID, name, req.user.id, `Created user: ${email}`);
@@ -148,15 +214,15 @@ app.post('/api/users', authenticateToken, async (req, res) => {
 
 // Update user
 app.put('/api/users/:id', authenticateToken, async (req, res) => {
-  const { name, status, organizationalUnit, managerEmail } = req.body;
+  const { name, roleId, departmentId, managerId, status } = req.body;
   
   try {
     await db.run(
-      'UPDATE users SET name = ?, status = ?, organizationalUnit = ?, managerEmail = ? WHERE id = ?',
-      [name, status, organizationalUnit, managerEmail, req.params.id]
+      'UPDATE users SET name = ?, roleId = ?, departmentId = ?, managerId = ?, status = ? WHERE id = ?',
+      [name, roleId, departmentId, managerId, status, req.params.id]
     );
 
-    await logAuditEvent('update_user', req.params.id, name, req.user.id, 'Updated user details');
+    await logAuditEvent('update_user', req.params.id, name, req.user.id, `Updated user details. Status: ${status}`);
     res.json({ success: true });
   } catch (error) {
     res.status(400).json({ error: error.message });
@@ -185,9 +251,14 @@ app.post('/api/users/:id/reset-password', authenticateToken, async (req, res) =>
 app.post('/api/users/:id/delete', authenticateToken, async (req, res) => {
   try {
     // Check if user exists
-    const user = await db.get('SELECT * FROM users WHERE id = ?', req.params.id);
+    const user = await db.get('SELECT u.*, r.name as roleName FROM users u JOIN roles r ON u.roleId = r.id WHERE u.id = ?', req.params.id);
     if (!user) {
       return res.status(404).json({ error: 'User not found' });
+    }
+
+    // Prevent deletion of admin users
+    if (user.roleName === 'admin') {
+      return res.status(403).json({ error: 'Admin users cannot be deleted' });
     }
 
     // Log the deletion before deleting the user
@@ -214,6 +285,329 @@ app.get('/api/audit-logs', authenticateToken, async (req, res) => {
   `);
   
   res.json(logs);
+});
+
+// Department endpoints
+app.get('/api/departments', authenticateToken, async (req, res) => {
+  try {
+    const departments = await db.all('SELECT * FROM departments');
+    res.json(departments);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.post('/api/departments', authenticateToken, async (req, res) => {
+  const { name, description } = req.body;
+  try {
+    const result = await db.run(
+      'INSERT INTO departments (name, description) VALUES (?, ?)',
+      [name, description]
+    );
+    await logAuditEvent('create_department', null, req.user.name, req.user.id, `Created department: ${name}`);
+    res.json({ id: result.lastID, name, description });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+app.put('/api/departments/:id', authenticateToken, async (req, res) => {
+  const { name, description } = req.body;
+  try {
+    await db.run(
+      'UPDATE departments SET name = ?, description = ? WHERE id = ?',
+      [name, description, req.params.id]
+    );
+    await logAuditEvent('update_department', null, req.user.name, req.user.id, `Updated department: ${name}`);
+    res.json({ success: true });
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Role endpoints
+app.get('/api/roles', authenticateToken, async (req, res) => {
+  try {
+    const roles = await db.all('SELECT id, name, description FROM roles ORDER BY name');
+    res.json(roles);
+  } catch (error) {
+    res.status(500).json({ error: 'Failed to fetch roles' });
+  }
+});
+
+app.get('/api/roles/:id', authenticateToken, async (req, res) => {
+  try {
+    const role = await db.get('SELECT * FROM roles WHERE id = ?', req.params.id);
+    if (!role) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+    res.json(role);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.post('/api/roles', authenticateToken, async (req, res) => {
+  const { name, description } = req.body;
+
+  // Validate required fields
+  if (!name) {
+    return res.status(400).json({ error: 'Role name is required' });
+  }
+
+  try {
+    // Check if role already exists
+    const existingRole = await db.get('SELECT id FROM roles WHERE name = ?', name.toLowerCase());
+    if (existingRole) {
+      return res.status(400).json({ error: 'Role with this name already exists' });
+    }
+
+    const result = await db.run(
+      'INSERT INTO roles (name, description) VALUES (?, ?)',
+      [name.toLowerCase(), description]
+    );
+
+    const newRole = await db.get('SELECT * FROM roles WHERE id = ?', result.lastID);
+
+    // Log the action
+    await logAuditEvent(
+      'create_role',
+      null,
+      null,
+      req.user.id,
+      `Created role: ${name}`
+    );
+
+    res.status(201).json(newRole);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.put('/api/roles/:id', authenticateToken, async (req, res) => {
+  const { name, description } = req.body;
+  const roleId = req.params.id;
+
+  // Validate required fields
+  if (!name) {
+    return res.status(400).json({ error: 'Role name is required' });
+  }
+
+  try {
+    // Check if role exists
+    const existingRole = await db.get('SELECT * FROM roles WHERE id = ?', roleId);
+    if (!existingRole) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+
+    // Check if new name conflicts with another role
+    const nameConflict = await db.get(
+      'SELECT id FROM roles WHERE name = ? AND id != ?',
+      [name.toLowerCase(), roleId]
+    );
+    if (nameConflict) {
+      return res.status(400).json({ error: 'Role with this name already exists' });
+    }
+
+    await db.run(
+      'UPDATE roles SET name = ?, description = ? WHERE id = ?',
+      [name.toLowerCase(), description, roleId]
+    );
+
+    const updatedRole = await db.get('SELECT * FROM roles WHERE id = ?', roleId);
+
+    // Log the action
+    await logAuditEvent(
+      'update_role',
+      null,
+      null,
+      req.user.id,
+      `Updated role: ${name}`
+    );
+
+    res.json(updatedRole);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.delete('/api/roles/:id', authenticateToken, async (req, res) => {
+  const roleId = req.params.id;
+
+  try {
+    // Check if role exists
+    const role = await db.get('SELECT * FROM roles WHERE id = ?', roleId);
+    if (!role) {
+      return res.status(404).json({ error: 'Role not found' });
+    }
+
+    // Check if role is in use
+    const usersWithRole = await db.get('SELECT COUNT(*) as count FROM users WHERE roleId = ?', roleId);
+    if (usersWithRole.count > 0) {
+      return res.status(400).json({ 
+        error: 'Cannot delete role that is assigned to users. Please reassign users first.' 
+      });
+    }
+
+    await db.run('DELETE FROM roles WHERE id = ?', roleId);
+
+    // Log the action
+    await logAuditEvent(
+      'delete_role',
+      null,
+      null,
+      req.user.id,
+      `Deleted role: ${role.name}`
+    );
+
+    res.json({ message: 'Role deleted successfully' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Organizational hierarchy endpoint
+app.get('/api/organization-tree', authenticateToken, async (req, res) => {
+  try {
+    const departmentId = req.query.departmentId;
+    console.log('Fetching org tree. Department ID:', departmentId);
+    
+    // If departmentId is provided, ensure it's a valid number
+    let parsedDepartmentId = null;
+    if (departmentId && departmentId !== 'all') {
+      parsedDepartmentId = parseInt(departmentId, 10);
+      if (isNaN(parsedDepartmentId)) {
+        return res.status(400).json({ error: 'Invalid department ID' });
+      }
+    }
+
+    // Get all non-admin users, optionally filtered by department
+    const users = await db.all(`
+      SELECT 
+        u.id, 
+        u.name, 
+        u.email,
+        u.managerId,
+        u.departmentId,
+        r.name as role,
+        d.name as department
+      FROM users u
+      LEFT JOIN roles r ON u.roleId = r.id
+      LEFT JOIN departments d ON u.departmentId = d.id
+      WHERE r.name != 'admin'
+      ${parsedDepartmentId ? 'AND u.departmentId = ?' : ''}
+      ORDER BY u.id
+    `, parsedDepartmentId ? [parsedDepartmentId] : []);
+
+    console.log('Found users:', users);
+
+    if (!users || users.length === 0) {
+      return res.json([]);
+    }
+
+    // Build the tree structure
+    const buildTree = (users, managerId = null) => {
+      const roots = users.filter(user => {
+        if (managerId === null) {
+          return !user.managerId;
+        }
+        return user.managerId === managerId;
+      });
+
+      return roots.map(user => ({
+        id: user.id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        department: user.department,
+        subordinates: buildTree(users, user.id)
+      }));
+    };
+
+    // Always return an array of root nodes
+    const orgTree = buildTree(users);
+    console.log('Final org tree:', JSON.stringify(orgTree, null, 2));
+    res.json(orgTree);
+
+  } catch (error) {
+    console.error('Error in organization-tree:', error);
+    res.status(500).json({ 
+      error: 'Internal server error', 
+      details: error.message,
+      stack: error.stack 
+    });
+  }
+});
+
+// Get users by department
+app.get('/api/departments/:id/users', authenticateToken, async (req, res) => {
+  try {
+    const users = await db.all(`
+      SELECT 
+        u.id, 
+        u.email, 
+        u.name, 
+        r.name as role,
+        d.name as department,
+        manager.name as managerName
+      FROM users u
+      LEFT JOIN roles r ON u.roleId = r.id
+      LEFT JOIN departments d ON u.departmentId = d.id
+      LEFT JOIN users manager ON u.managerId = manager.id
+      WHERE u.departmentId = ?
+    `, req.params.id);
+    res.json(users);
+  } catch (error) {
+    res.status(400).json({ error: error.message });
+  }
+});
+
+// Get organization hierarchy with department filtering
+app.get('/api/organization', authenticateToken, async (req, res) => {
+  try {
+    const { departmentId } = req.query;
+    
+    let query = `
+      SELECT 
+        u.id, 
+        u.name, 
+        u.email, 
+        u.managerId,
+        r.name as role,
+        d.name as department
+      FROM users u
+      LEFT JOIN roles r ON u.roleId = r.id
+      LEFT JOIN departments d ON u.departmentId = d.id
+      WHERE 1=1
+    `;
+    
+    const params = [];
+    if (departmentId && departmentId !== 'all') {
+      query += ' AND u.departmentId = ?';
+      params.push(departmentId);
+    }
+
+    const users = await db.all(query, params);
+    
+    if (users.length === 0) {
+      return res.json({ id: 0, name: 'No Users', subordinates: [] });
+    }
+
+    const buildTree = (users, managerId = null) => {
+      // Consider both null and empty string as root nodes
+      const roots = users.filter(user => !user.managerId || user.managerId === '' || user.managerId === managerId);
+      return roots.map(user => ({
+        ...user,
+        subordinates: buildTree(users, user.id)
+      }));
+    };
+
+    const orgTree = buildTree(users);
+    res.json(orgTree);
+  } catch (error) {
+    console.error('Error fetching organization:', error);
+    res.status(500).json({ error: 'Failed to fetch organization structure' });
+  }
 });
 
 // Handle React routing, return all requests to React app

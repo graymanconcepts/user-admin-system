@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const api = axios.create({
+export const api = axios.create({
   baseURL: 'http://localhost:3000/api'
 });
 
@@ -33,7 +33,7 @@ export const createUser = async (userData: any) => {
   return data;
 };
 
-export const updateUser = async (id: string, userData: any) => {
+export const updateUser = async ({ id, ...userData }: { id: string | number } & Record<string, any>) => {
   const { data } = await api.put(`/users/${id}`, userData);
   return data;
 };

@@ -7,25 +7,15 @@ import CreateUserModal from '../components/CreateUserModal';
 import EditUserModal from '../components/EditUserModal';
 import DeleteConfirmationModal from '../components/DeleteConfirmationModal';
 import { fetchUsers, deleteUser } from '../api/users';
-
-// Add User type definition
-type User = {
-  id: number | string;
-  name: string;
-  email: string;
-  role: string;
-  createdAt: string;
-  status: string;
-  lastLogin?: string;
-  organizationalUnit?: string;
-  managerEmail?: string;
-};
+import { fetchDepartments } from '../api/departments';
+import { User } from '../types/User';
 
 export default function UserList() {
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
   const [editingUser, setEditingUser] = useState<User | null>(null);
   const [deletingUser, setDeletingUser] = useState<User | null>(null);
   const [search, setSearch] = useState('');
+  const [selectedDepartment, setSelectedDepartment] = useState<number | 'all'>('all');
   const queryClient = useQueryClient();
   
   const { data: users = [], isLoading } = useQuery({
@@ -35,7 +25,15 @@ export default function UserList() {
       console.log('Successful API endpoint:', '/users');
       console.log('Response:', response);
       return response;
-    }
+    },
+    staleTime: 0, // Consider data stale immediately
+    refetchOnMount: true, // Always refetch when component mounts
+    refetchOnWindowFocus: true // Refetch when window regains focus
+  });
+
+  const { data: departments = [] } = useQuery({
+    queryKey: ['departments'],
+    queryFn: fetchDepartments
   });
 
   const deleteMutation = useMutation({
@@ -70,10 +68,45 @@ export default function UserList() {
     }
   };
 
-  const filteredUsers = users.filter((user: User) => 
-    user.name.toLowerCase().includes(search.toLowerCase()) ||
-    user.email.toLowerCase().includes(search.toLowerCase())
-  );
+  const filteredUsers = selectedDepartment === 'all'
+    ? users
+    : users.filter((user: User) => user.departmentName.toLowerCase() === String(selectedDepartment).toLowerCase());
+
+  const getRoleColor = (role?: string) => {
+    if (!role) return 'gray'; // Default color for undefined roles
+    
+    switch (role.toLowerCase()) {
+      case 'admin':
+        return 'red';
+      case 'manager':
+        return 'blue';
+      case 'employee':
+        return 'green';
+      case 'contractor':
+        return 'yellow';
+      default:
+        return 'gray';
+    }
+  };
+
+  const getStatusBadgeClass = (status?: string) => {
+    console.log('Status value:', status); // Debug log
+    if (!status) return 'badge-warning';
+    
+    switch (status.toLowerCase()) {
+      case 'active':
+        return 'badge-success';
+      case 'inactive':
+        return 'badge-error';
+      case 'pending':
+        return 'badge-warning';
+      case 'suspended':
+        return 'badge-error';
+      default:
+        console.log('Unknown status:', status); // Debug log
+        return 'badge-warning';
+    }
+  };
 
   return (
     <div>
@@ -90,15 +123,29 @@ export default function UserList() {
 
       <div className="card">
         <div className="p-4 border-b border-primary-300/20">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-disabled w-5 h-5" />
-            <input
-              type="text"
-              placeholder="Search users..."
-              className="input-field pl-10 pr-4 py-2 w-full"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
+          <div className="flex gap-4">
+            <div className="relative flex-1">
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 text-text-disabled w-5 h-5" />
+              <input
+                type="text"
+                placeholder="Search users..."
+                className="input-field pl-10 pr-4 py-2 w-full"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+              />
+            </div>
+            <div className="w-64">
+              <select
+                value={selectedDepartment}
+                onChange={(e) => setSelectedDepartment(e.target.value === 'all' ? 'all' : Number(e.target.value))}
+                className="input-field py-2 w-full"
+              >
+                <option value="all">All Departments</option>
+                {departments.map((dept: { id: number; name: string }) => (
+                  <option key={dept.id} value={dept.name}>{dept.name}</option>
+                ))}
+              </select>
+            </div>
           </div>
         </div>
 
@@ -108,6 +155,8 @@ export default function UserList() {
               <tr>
                 <th className="table-header">Name</th>
                 <th className="table-header">Email</th>
+                <th className="table-header">Role</th>
+                <th className="table-header">Department</th>
                 <th className="table-header">Status</th>
                 <th className="table-header">Last Login</th>
                 <th className="table-header">Actions</th>
@@ -116,18 +165,21 @@ export default function UserList() {
             <tbody>
               {isLoading ? (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center text-text-disabled">Loading...</td>
+                  <td colSpan={7} className="px-6 py-4 text-center text-text-disabled">Loading...</td>
                 </tr>
-              ) : filteredUsers.map((user: User) => (
+              ) : filteredUsers.filter((user: User) => 
+                user.name.toLowerCase().includes(search.toLowerCase()) ||
+                user.email.toLowerCase().includes(search.toLowerCase())
+              ).map((user: User) => (
                 <tr key={user.id}>
                   <td className="table-cell">{user.name}</td>
                   <td className="table-cell">{user.email}</td>
+                  <td className={`table-cell font-semibold text-${getRoleColor(user.roleName)}-600`}>
+                    {user.roleName}
+                  </td>
+                  <td className="table-cell">{user.departmentName}</td>
                   <td className="table-cell">
-                    <span className={`badge ${
-                      user.status === 'active' 
-                        ? 'badge-success' 
-                        : 'badge-warning'
-                    }`}>
+                    <span className={`badge ${getStatusBadgeClass(user.status)}`}>
                       {user.status}
                     </span>
                   </td>
@@ -154,9 +206,12 @@ export default function UserList() {
                   </td>
                 </tr>
               ))}
-              {!isLoading && filteredUsers.length === 0 && (
+              {!isLoading && filteredUsers.filter((user: User) => 
+                user.name.toLowerCase().includes(search.toLowerCase()) ||
+                user.email.toLowerCase().includes(search.toLowerCase())
+              ).length === 0 && (
                 <tr>
-                  <td colSpan={5} className="px-6 py-4 text-center text-text-disabled">
+                  <td colSpan={7} className="px-6 py-4 text-center text-text-disabled">
                     No users found
                   </td>
                 </tr>

@@ -58,7 +58,7 @@ export default function AuditLogs() {
                     </span>
                   </td>
                   <td className="table-cell text-text-primary">
-                    {log.userName || 'Unknown User'}
+                    {log.userId ? (log.userName || 'Unknown User') : '—'}
                   </td>
                   <td className="table-cell text-text-primary">
                     {userMap[log.performedBy] || log.performerEmail || 'Unknown User'}
